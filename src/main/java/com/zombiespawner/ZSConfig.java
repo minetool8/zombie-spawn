@@ -21,6 +21,7 @@ public class ZSConfig {
     public static final ForgeConfigSpec.BooleanValue STRICT_LOS;
     public static final ForgeConfigSpec.IntValue VIEW_CONE;
     public static final ForgeConfigSpec.BooleanValue OWN_DESPAWN;
+    public static final ForgeConfigSpec.BooleanValue LOG_REMOVALS;
 
     // --- vanilla blocking ---
     public static final ForgeConfigSpec.BooleanValue BLOCK_VANILLA_HOSTILES;
@@ -50,7 +51,7 @@ public class ZSConfig {
         MAX_DIST = b.comment("Maximum spawn distance from the player (blocks). Keep it inside your simulation distance (default 10 chunks = 160 blocks, but 64 is safe).")
                 .defineInRange("maxDistance", 64, 16, 128);
         MAX_PER_PLAYER = b.comment("Max spawned zombies within range of one player. Spawning pauses at this cap.")
-                .defineInRange("maxZombiesPerPlayer", 30, 1, 500);
+                .defineInRange("maxZombiesPerPlayer", 15, 1, 500);
         DESPAWN_DIST = b.comment("Zombies spawned by this mod are removed when no player is within this many blocks.")
                 .defineInRange("despawnDistance", 128, 32, 512);
         OWN_DESPAWN = b.comment("Mark spawned zombies as persistent (vanilla won't random-despawn them) and use despawnDistance instead.")
@@ -60,6 +61,8 @@ public class ZSConfig {
                 .define("strictLineOfSight", false);
         VIEW_CONE = b.comment("Full width in degrees of the 'player can see this' cone (non-strict mode).")
                 .defineInRange("viewConeDegrees", 150, 60, 360);
+        LOG_REMOVALS = b.comment("Debug: log to the console whenever a zombie spawned by this mod is removed, with the reason and position.")
+                .define("logRemovals", false);
         b.pop();
 
         b.push("vanilla_blocking");
