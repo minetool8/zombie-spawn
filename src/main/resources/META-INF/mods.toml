@@ -1,0 +1,26 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="zombiespawner"
+version="1.0.0"
+displayName="Zombie Spawner"
+description='''
+Only zombies spawn. No light level checks, any time of day, always out of the player's sight.
+Also stretches the day and night cycle (default 25 min day + 25 min night).
+'''
+
+[[dependencies.zombiespawner]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.zombiespawner]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.21)"
+ordering="NONE"
+side="BOTH"
