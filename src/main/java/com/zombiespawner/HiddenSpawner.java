@@ -172,6 +172,7 @@ public class HiddenSpawner {
         for (Entity e : level.getAllEntities()) {
             if (!(e instanceof Mob mob)) continue;
             if (!mob.getPersistentData().getBoolean(TAG)) continue;
+            mob.setPersistenceRequired(); // re-assert so vanilla never despawns it
             if (mob.hasCustomName()) continue;
             if (level.getNearestPlayer(mob, range) == null) toRemove.add(mob);
         }
