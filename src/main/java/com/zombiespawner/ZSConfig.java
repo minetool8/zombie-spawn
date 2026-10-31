@@ -23,6 +23,13 @@ public class ZSConfig {
     public static final ForgeConfigSpec.BooleanValue OWN_DESPAWN;
     public static final ForgeConfigSpec.BooleanValue LOG_REMOVALS;
 
+    // --- regions ---
+    public static final ForgeConfigSpec.IntValue REGION_SIZE;
+    public static final ForgeConfigSpec.IntValue MIN_PER_REGION;
+    public static final ForgeConfigSpec.IntValue MAX_PER_REGION;
+    public static final ForgeConfigSpec.BooleanValue FRONTIER_ENABLED;
+    public static final ForgeConfigSpec.DoubleValue FRONTIER_CHANCE;
+
     // --- vanilla blocking ---
     public static final ForgeConfigSpec.BooleanValue BLOCK_VANILLA_HOSTILES;
     public static final ForgeConfigSpec.BooleanValue BLOCK_PHANTOMS;
@@ -43,7 +50,7 @@ public class ZSConfig {
         DIMENSIONS = b.comment("Dimensions where the spawner runs.")
                 .defineListAllowEmpty("dimensions", List.of("minecraft:overworld"), o -> o instanceof String);
         INTERVAL_TICKS = b.comment("Ticks between spawn cycles (20 = 1 second). Each cycle spawns at most 1 zombie per player.")
-                .defineInRange("spawnIntervalTicks", 40, 1, 24000);
+                .defineInRange("spawnIntervalTicks", 100, 1, 24000);
         ATTEMPTS = b.comment("How many random positions to try per cycle per player.")
                 .defineInRange("attemptsPerCycle", 10, 1, 100);
         MIN_DIST = b.comment("Minimum spawn distance from the player (blocks).")
@@ -63,6 +70,20 @@ public class ZSConfig {
                 .defineInRange("viewConeDegrees", 150, 60, 360);
         LOG_REMOVALS = b.comment("Debug: log to the console whenever a zombie spawned by this mod is removed, with the reason and position.")
                 .define("logRemovals", false);
+        b.pop();
+
+        b.push("regions");
+        REGION_SIZE = b.comment("Side length (blocks) of a square region. Each region owns a fixed zombie budget.")
+                .defineInRange("regionSize", 32, 8, 256);
+        MIN_PER_REGION = b.comment("Each region is given a random budget between min and max the first time it is needed.",
+                        "Zombies killed in a region are never replaced. Budget 0 = cleared forever.")
+                .defineInRange("minZombiesPerRegion", 2, 0, 200);
+        MAX_PER_REGION = b.defineInRange("maxZombiesPerRegion", 8, 0, 200);
+        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie at the far edge of your range, but only in regions",
+                        "you have NEVER been inside. They never touch regions you have visited/cleared.")
+                .define("frontierWanderers", true);
+        FRONTIER_CHANCE = b.comment("Chance per spawn cycle (per player) to try a frontier wanderer instead of a regional spawn.")
+                .defineInRange("frontierChance", 0.15, 0.0, 1.0);
         b.pop();
 
         b.push("vanilla_blocking");
