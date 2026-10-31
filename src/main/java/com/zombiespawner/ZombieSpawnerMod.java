@@ -14,5 +14,6 @@ public class ZombieSpawnerMod {
         MinecraftForge.EVENT_BUS.register(new SpawnBlockHandler());
         MinecraftForge.EVENT_BUS.register(new HiddenSpawner());
         MinecraftForge.EVENT_BUS.register(new DayNightController());
+        MinecraftForge.EVENT_BUS.register(new ResetCommand());
     }
 }
