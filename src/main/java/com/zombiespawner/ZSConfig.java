@@ -25,10 +25,18 @@ public class ZSConfig {
 
     // --- regions ---
     public static final ForgeConfigSpec.IntValue REGION_SIZE;
-    public static final ForgeConfigSpec.IntValue MIN_PER_REGION;
-    public static final ForgeConfigSpec.IntValue MAX_PER_REGION;
+    public static final ForgeConfigSpec.IntValue MIN_INDOOR;
+    public static final ForgeConfigSpec.IntValue MAX_INDOOR;
+    public static final ForgeConfigSpec.IntValue MIN_OPEN;
+    public static final ForgeConfigSpec.IntValue MAX_OPEN;
+    public static final ForgeConfigSpec.DoubleValue OPEN_CHANCE;
     public static final ForgeConfigSpec.BooleanValue FRONTIER_ENABLED;
     public static final ForgeConfigSpec.DoubleValue FRONTIER_CHANCE;
+
+    // --- where zombies may stand ---
+    public static final ForgeConfigSpec.BooleanValue ALLOW_CAVES;
+    public static final ForgeConfigSpec.IntValue BUILDING_MAX_DEPTH;
+    public static final ForgeConfigSpec.IntValue BUILDING_MIN_BLOCKS;
 
     // --- vanilla blocking ---
     public static final ForgeConfigSpec.BooleanValue BLOCK_VANILLA_HOSTILES;
@@ -55,10 +63,10 @@ public class ZSConfig {
                 .defineInRange("attemptsPerCycle", 10, 1, 100);
         MIN_DIST = b.comment("Minimum spawn distance from the player (blocks).")
                 .defineInRange("minDistance", 24, 8, 128);
-        MAX_DIST = b.comment("Maximum spawn distance from the player (blocks). Keep it inside your simulation distance (default 10 chunks = 160 blocks, but 64 is safe).")
+        MAX_DIST = b.comment("Maximum spawn distance from the player (blocks).")
                 .defineInRange("maxDistance", 64, 16, 128);
         MAX_PER_PLAYER = b.comment("Max spawned zombies within range of one player. Spawning pauses at this cap.")
-                .defineInRange("maxZombiesPerPlayer", 15, 1, 500);
+                .defineInRange("maxZombiesPerPlayer", 5, 1, 500);
         DESPAWN_DIST = b.comment("Zombies spawned by this mod are removed when no player is within this many blocks.")
                 .defineInRange("despawnDistance", 128, 32, 512);
         OWN_DESPAWN = b.comment("Mark spawned zombies as persistent (vanilla won't random-despawn them) and use despawnDistance instead.")
@@ -75,15 +83,31 @@ public class ZSConfig {
         b.push("regions");
         REGION_SIZE = b.comment("Side length (blocks) of a square region. Each region owns a fixed zombie budget.")
                 .defineInRange("regionSize", 32, 8, 256);
-        MIN_PER_REGION = b.comment("Each region is given a random budget between min and max the first time it is needed.",
-                        "Zombies killed in a region are never replaced. Budget 0 = cleared forever.")
-                .defineInRange("minZombiesPerRegion", 2, 0, 200);
-        MAX_PER_REGION = b.defineInRange("maxZombiesPerRegion", 8, 0, 200);
-        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie at the far edge of your range, but only in regions",
+        MIN_INDOOR = b.comment("Zombies per region that live INSIDE BUILDINGS. Random between min and max, rolled once per region.",
+                        "Killed zombies are never replaced. 0 left = cleared forever.")
+                .defineInRange("minIndoorPerRegion", 1, 0, 200);
+        MAX_INDOOR = b.defineInRange("maxIndoorPerRegion", 3, 0, 200);
+        MIN_OPEN = b.comment("Zombies per region that stand OUTSIDE in the open. Keep this tiny.")
+                .defineInRange("minOpenPerRegion", 0, 0, 200);
+        MAX_OPEN = b.defineInRange("maxOpenPerRegion", 1, 0, 200);
+        OPEN_CHANCE = b.comment("Chance that a spawn attempt targets the open instead of a building (when the region has open budget).")
+                .defineInRange("openSpawnChance", 0.15, 0.0, 1.0);
+        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie in the open at the far edge of your range, but only in regions",
                         "you have NEVER been inside. They never touch regions you have visited/cleared.")
                 .define("frontierWanderers", true);
-        FRONTIER_CHANCE = b.comment("Chance per spawn cycle (per player) to try a frontier wanderer instead of a regional spawn.")
-                .defineInRange("frontierChance", 0.15, 0.0, 1.0);
+        FRONTIER_CHANCE = b.comment("Chance per spawn cycle (per player) to try a frontier wanderer.")
+                .defineInRange("frontierChance", 0.05, 0.0, 1.0);
+        b.pop();
+
+        b.push("placement");
+        ALLOW_CAVES = b.comment("Allow spawning in caves / underground spaces that are not buildings.")
+                .define("allowCaves", false);
+        BUILDING_MAX_DEPTH = b.comment("A roofed spot is only a 'building' if the surface is at most this many blocks above it.",
+                        "Anything deeper counts as underground/cave.")
+                .defineInRange("buildingMaxDepth", 12, 3, 64);
+        BUILDING_MIN_BLOCKS = b.comment("A roofed spot is only a 'building' if at least this many man-made blocks (planks, bricks, glass, doors,",
+                        "furniture...) are within 3 blocks. Lower = more places count as buildings, higher = stricter.")
+                .defineInRange("buildingMinBlocks", 10, 1, 150);
         b.pop();
 
         b.push("vanilla_blocking");
