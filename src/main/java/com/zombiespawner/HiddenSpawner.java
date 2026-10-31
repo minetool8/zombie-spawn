@@ -13,7 +13,11 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobSpawnType;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
@@ -34,6 +38,7 @@ public class HiddenSpawner {
     public static final String TAG = "zs_spawned";
     public static final String REGION_TAG = "zs_region";
     public static final String WANDER_TAG = "zs_wander";
+    public static final String OPEN_TAG = "zs_open";
 
     private int tickCounter = 0;
     private boolean warnedBadId = false;
@@ -99,37 +104,53 @@ public class HiddenSpawner {
             int z = Mth.floor(player.getZ() + Math.sin(angle) * dist);
 
             long key = RegionData.key(x, z, size);
+
+            // decide what this attempt is looking for: a building (usual) or the open (rare)
+            boolean wantOpen = frontier || rnd.nextDouble() < ZSConfig.OPEN_CHANCE.get();
             if (frontier) {
-                if (data.isVisited(key)) continue;               // never in explored/cleared land
+                if (data.isVisited(key)) continue;                    // never in explored/cleared land
+            } else if (wantOpen) {
+                if (data.getOpen(level, key) <= 0) continue;
             } else {
-                if (data.getUnspawned(level, key) <= 0) continue; // region cleared or used up
+                if (data.getIndoor(level, key) <= 0) continue;
             }
 
             if (!level.hasChunkAt(new BlockPos(x, py, z))) continue;
             if (!level.getWorldBorder().isWithinBounds(x, z)) continue;
 
-            List<BlockPos> spots = new ArrayList<>();
+            // standing spots in this column, split into "under a roof" and "open sky"
+            List<BlockPos> roofed = new ArrayList<>();
+            List<BlockPos> openSpots = new ArrayList<>();
             for (int y = top; y >= bottom; y--) {
                 BlockPos pos = new BlockPos(x, y, z);
-                if (isValidSpot(level, pos)) spots.add(pos);
+                if (!isValidSpot(level, pos)) continue;
+                if (isRoofed(level, pos)) roofed.add(pos); else openSpots.add(pos);
             }
-            if (spots.isEmpty()) continue;
 
-            BlockPos chosen = spots.get(rnd.nextInt(spots.size()));
+            BlockPos chosen = null;
+            if (wantOpen) {
+                if (!openSpots.isEmpty()) chosen = openSpots.get(rnd.nextInt(openSpots.size()));
+            } else if (!roofed.isEmpty()) {
+                for (int t = 0; t < 3 && chosen == null; t++) {
+                    BlockPos c = roofed.get(rnd.nextInt(roofed.size()));
+                    if (ZSConfig.ALLOW_CAVES.get() || looksLikeBuilding(level, c)) chosen = c;
+                }
+            }
+            if (chosen == null) continue;
+
             Vec3 feet = new Vec3(chosen.getX() + 0.5, chosen.getY(), chosen.getZ() + 0.5);
-
             if (feet.distanceToSqr(player.position()) < (double) minD * minD) continue;
             if (!isHidden(level, player, feet)) continue;
 
-            if (spawnAt(level, type, feet, rnd, key, frontier)) {
-                if (!frontier) data.consume(key);
+            if (spawnAt(level, type, feet, rnd, key, frontier, wantOpen)) {
+                if (!frontier) data.consume(key, wantOpen);
                 return; // one per player per cycle
             }
         }
     }
 
     private boolean spawnAt(ServerLevel level, EntityType<?> type, Vec3 pos, RandomSource rnd,
-                            long regionKey, boolean wanderer) {
+                            long regionKey, boolean wanderer, boolean isOpen) {
         Entity entity = type.create(level);
         if (entity == null) return false;
 
@@ -141,8 +162,12 @@ public class HiddenSpawner {
 
         CompoundTag pd = entity.getPersistentData();
         pd.putBoolean(TAG, true);
-        if (wanderer) pd.putBoolean(WANDER_TAG, true);
-        else pd.putLong(REGION_TAG, regionKey);
+        if (wanderer) {
+            pd.putBoolean(WANDER_TAG, true);
+        } else {
+            pd.putLong(REGION_TAG, regionKey);
+            pd.putBoolean(OPEN_TAG, isOpen);
+        }
 
         if (entity instanceof Mob mob) {
             if (ZSConfig.OWN_DESPAWN.get()) mob.setPersistenceRequired();
@@ -151,6 +176,58 @@ public class HiddenSpawner {
         }
         level.addFreshEntityWithPassengers(entity);
         return true;
+    }
+
+    // ------------------------------------------------------------------ where am I?
+
+    /** Solid roof above (trees don't count, leaves are ignored). A building's own roof-top counts as open. */
+    private boolean isRoofed(ServerLevel level, BlockPos feet) {
+        int h = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, feet.getX(), feet.getZ());
+        return h > feet.getY() + 2;
+    }
+
+    /**
+     * Roofed + not too deep below the surface + surrounded by man-made blocks.
+     * Natural caves fail this (too deep or only stone/dirt/ores around).
+     */
+    private boolean looksLikeBuilding(ServerLevel level, BlockPos feet) {
+        int h = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, feet.getX(), feet.getZ());
+        if (h - feet.getY() > ZSConfig.BUILDING_MAX_DEPTH.get()) return false;
+
+        if (!level.hasChunksAt(feet.offset(-3, 0, -3), feet.offset(3, 0, 3))) return false;
+
+        int needed = ZSConfig.BUILDING_MIN_BLOCKS.get();
+        int found = 0;
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    m.set(feet.getX() + dx, feet.getY() + dy, feet.getZ() + dz);
+                    if (isManMade(level.getBlockState(m)) && ++found >= needed) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isManMade(BlockState s) {
+        if (s.isAir() || !s.getFluidState().isEmpty()) return false;
+        if (s.is(BlockTags.BASE_STONE_OVERWORLD) || s.is(BlockTags.DIRT) || s.is(BlockTags.SAND)
+                || s.is(BlockTags.LEAVES) || s.is(BlockTags.LOGS) || s.is(BlockTags.ICE)
+                || s.is(BlockTags.SNOW) || s.is(BlockTags.FLOWERS)
+                || s.is(BlockTags.COAL_ORES) || s.is(BlockTags.IRON_ORES) || s.is(BlockTags.COPPER_ORES)
+                || s.is(BlockTags.GOLD_ORES) || s.is(BlockTags.REDSTONE_ORES) || s.is(BlockTags.LAPIS_ORES)
+                || s.is(BlockTags.DIAMOND_ORES) || s.is(BlockTags.EMERALD_ORES)) return false;
+        Block b = s.getBlock();
+        return !(b == Blocks.GRAVEL || b == Blocks.CLAY || b == Blocks.MUD || b == Blocks.MOSS_BLOCK
+                || b == Blocks.MOSS_CARPET || b == Blocks.DRIPSTONE_BLOCK || b == Blocks.POINTED_DRIPSTONE
+                || b == Blocks.CALCITE || b == Blocks.GLOW_LICHEN || b == Blocks.VINE
+                || b == Blocks.CAVE_VINES || b == Blocks.CAVE_VINES_PLANT || b == Blocks.HANGING_ROOTS
+                || b == Blocks.SMALL_DRIPLEAF || b == Blocks.BIG_DRIPLEAF || b == Blocks.BIG_DRIPLEAF_STEM
+                || b == Blocks.SPORE_BLOSSOM || b == Blocks.AMETHYST_BLOCK || b == Blocks.BUDDING_AMETHYST
+                || b == Blocks.AMETHYST_CLUSTER || b == Blocks.GRASS || b == Blocks.TALL_GRASS
+                || b == Blocks.FERN || b == Blocks.LARGE_FERN || b == Blocks.SANDSTONE
+                || b == Blocks.RED_SANDSTONE || b == Blocks.TERRACOTTA || b == Blocks.COBWEB);
     }
 
     private boolean isValidSpot(ServerLevel level, BlockPos feet) {
@@ -209,7 +286,7 @@ public class HiddenSpawner {
         for (Entity e : toRemove) {
             CompoundTag pd = e.getPersistentData();
             if (pd.contains(REGION_TAG) && !pd.getBoolean(WANDER_TAG)) {
-                data.giveBack(pd.getLong(REGION_TAG));
+                data.giveBack(pd.getLong(REGION_TAG), pd.getBoolean(OPEN_TAG));
             }
             e.discard();
         }
