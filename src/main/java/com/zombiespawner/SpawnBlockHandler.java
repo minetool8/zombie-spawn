@@ -4,13 +4,15 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.Phantom;
+import net.minecraft.world.entity.monster.Zombie;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.event.entity.living.MobSpawnEvent;
+import net.minecraftforge.event.entity.living.ZombieEvent;
 import net.minecraftforge.eventbus.api.Event;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
-/** Stops vanilla from spawning hostile mobs, and stops vanilla from despawning ours. */
+/** Stops vanilla from spawning hostile mobs, stops baby zombies, and stops vanilla from despawning ours. */
 public class SpawnBlockHandler {
 
     @SubscribeEvent
@@ -27,6 +29,14 @@ public class SpawnBlockHandler {
         }
     }
 
+    /** A hit zombie normally calls in more zombies. Those belong to no region, so they would "respawn" cleared areas. */
+    @SubscribeEvent
+    public void onSummonAid(ZombieEvent.SummonAidEvent event) {
+        if (ZSConfig.BLOCK_REINFORCEMENTS.get()) {
+            event.setResult(Event.Result.DENY);
+        }
+    }
+
     /** Zombies spawned by this mod are only ever removed by our own distance cleanup. */
     @SubscribeEvent
     public void onAllowDespawn(MobSpawnEvent.AllowDespawn event) {
@@ -39,9 +49,19 @@ public class SpawnBlockHandler {
     @SubscribeEvent
     public void onJoin(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide()) return;
-        if (!ZSConfig.BLOCK_PHANTOMS.get()) return;
-        if (event.getEntity() instanceof Phantom && !event.loadedFromDisk()) {
+        Entity entity = event.getEntity();
+
+        if (ZSConfig.BLOCK_PHANTOMS.get() && entity instanceof Phantom && !event.loadedFromDisk()) {
             event.setCanceled(true);
+            return;
+        }
+
+        // no baby zombies: catches anything that slipped through (other mods, old saves of this mod)
+        if (!ZSConfig.ALLOW_BABIES.get() && entity instanceof Zombie zombie && zombie.isBaby()) {
+            boolean ours = zombie.getPersistentData().getBoolean(HiddenSpawner.TAG);
+            if (!event.loadedFromDisk() || ours) {
+                zombie.setBaby(false);
+            }
         }
     }
 

@@ -16,11 +16,13 @@ public class ZSConfig {
     public static final ForgeConfigSpec.IntValue ATTEMPTS;
     public static final ForgeConfigSpec.IntValue MIN_DIST;
     public static final ForgeConfigSpec.IntValue MAX_DIST;
+    public static final ForgeConfigSpec.IntValue VERTICAL_RANGE;
     public static final ForgeConfigSpec.IntValue MAX_PER_PLAYER;
     public static final ForgeConfigSpec.IntValue DESPAWN_DIST;
     public static final ForgeConfigSpec.BooleanValue STRICT_LOS;
     public static final ForgeConfigSpec.IntValue VIEW_CONE;
     public static final ForgeConfigSpec.BooleanValue OWN_DESPAWN;
+    public static final ForgeConfigSpec.BooleanValue ALLOW_BABIES;
     public static final ForgeConfigSpec.BooleanValue LOG_REMOVALS;
 
     // --- regions ---
@@ -33,14 +35,22 @@ public class ZSConfig {
     public static final ForgeConfigSpec.BooleanValue FRONTIER_ENABLED;
     public static final ForgeConfigSpec.DoubleValue FRONTIER_CHANCE;
 
-    // --- where zombies may stand ---
+    // --- where zombies may stand / what counts as a building ---
     public static final ForgeConfigSpec.BooleanValue ALLOW_CAVES;
-    public static final ForgeConfigSpec.IntValue BUILDING_MAX_DEPTH;
-    public static final ForgeConfigSpec.IntValue BUILDING_MIN_BLOCKS;
+    public static final ForgeConfigSpec.IntValue COLUMN_SAMPLES;
+    public static final ForgeConfigSpec.IntValue CEILING_HEIGHT;
+    public static final ForgeConfigSpec.IntValue ENCLOSURE_RADIUS;
+    public static final ForgeConfigSpec.IntValue MIN_ENCLOSED_RAYS;
+    public static final ForgeConfigSpec.DoubleValue MIN_MAN_MADE_RATIO;
+    public static final ForgeConfigSpec.BooleanValue DETECT_BY_SHAPE;
+    public static final ForgeConfigSpec.IntValue MAX_NATURAL_COVER;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NATURAL_BLOCKS;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BUILDING_BLOCKS;
 
     // --- vanilla blocking ---
     public static final ForgeConfigSpec.BooleanValue BLOCK_VANILLA_HOSTILES;
     public static final ForgeConfigSpec.BooleanValue BLOCK_PHANTOMS;
+    public static final ForgeConfigSpec.BooleanValue BLOCK_REINFORCEMENTS;
 
     // --- time ---
     public static final ForgeConfigSpec.BooleanValue MANAGE_TIME;
@@ -59,18 +69,23 @@ public class ZSConfig {
                 .defineListAllowEmpty("dimensions", List.of("minecraft:overworld"), o -> o instanceof String);
         INTERVAL_TICKS = b.comment("Ticks between spawn cycles (20 = 1 second). Each cycle spawns at most 1 zombie per player.")
                 .defineInRange("spawnIntervalTicks", 100, 1, 24000);
-        ATTEMPTS = b.comment("How many random positions to try per cycle per player.")
+        ATTEMPTS = b.comment("How many random regions to try per cycle per player.")
                 .defineInRange("attemptsPerCycle", 10, 1, 100);
         MIN_DIST = b.comment("Minimum spawn distance from the player (blocks).")
                 .defineInRange("minDistance", 24, 8, 128);
         MAX_DIST = b.comment("Maximum spawn distance from the player (blocks).")
                 .defineInRange("maxDistance", 64, 16, 128);
+        VERTICAL_RANGE = b.comment("How far above/below the player (blocks) a zombie may be placed.")
+                .defineInRange("verticalRange", 24, 4, 128);
         MAX_PER_PLAYER = b.comment("Max spawned zombies within range of one player. Spawning pauses at this cap.")
                 .defineInRange("maxZombiesPerPlayer", 5, 1, 500);
         DESPAWN_DIST = b.comment("Zombies spawned by this mod are removed when no player is within this many blocks.")
                 .defineInRange("despawnDistance", 128, 32, 512);
         OWN_DESPAWN = b.comment("Mark spawned zombies as persistent (vanilla won't random-despawn them) and use despawnDistance instead.")
                 .define("useOwnDespawn", true);
+        ALLOW_BABIES = b.comment("false = no baby zombies (and no chicken jockeys). Applies to zombies spawned by this mod and",
+                        "to any other baby zombie that appears in the world. Existing baby zombies are turned into adults.")
+                .define("allowBabyZombies", false);
         STRICT_LOS = b.comment("true = reject any spot with a clear line of sight to the player, even behind them.",
                         "false = only reject spots the player could be looking at (inside the view cone).")
                 .define("strictLineOfSight", false);
@@ -84,7 +99,7 @@ public class ZSConfig {
         REGION_SIZE = b.comment("Side length (blocks) of a square region. Each region owns a fixed zombie budget.")
                 .defineInRange("regionSize", 32, 8, 256);
         MIN_INDOOR = b.comment("Zombies per region that live INSIDE BUILDINGS. Random between min and max, rolled once per region.",
-                        "Killed zombies are never replaced. 0 left = cleared forever.")
+                        "Killed zombies are never replaced. When every zombie of a region is dead, the region is CLEARED for good.")
                 .defineInRange("minIndoorPerRegion", 1, 0, 200);
         MAX_INDOOR = b.defineInRange("maxIndoorPerRegion", 3, 0, 200);
         MIN_OPEN = b.comment("Zombies per region that stand OUTSIDE in the open. Keep this tiny.")
@@ -92,22 +107,41 @@ public class ZSConfig {
         MAX_OPEN = b.defineInRange("maxOpenPerRegion", 1, 0, 200);
         OPEN_CHANCE = b.comment("Chance that a spawn attempt targets the open instead of a building (when the region has open budget).")
                 .defineInRange("openSpawnChance", 0.15, 0.0, 1.0);
-        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie in the open at the far edge of your range, but only in regions",
-                        "you have NEVER been inside. They never touch regions you have visited/cleared.")
+        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie in the open at the far edge of your range, but only in land",
+                        "you have NEVER been near (the region and all 8 regions around it must be unvisited and not cleared).")
                 .define("frontierWanderers", true);
         FRONTIER_CHANCE = b.comment("Chance per spawn cycle (per player) to try a frontier wanderer.")
                 .defineInRange("frontierChance", 0.05, 0.0, 1.0);
         b.pop();
 
         b.push("placement");
-        ALLOW_CAVES = b.comment("Allow spawning in caves / underground spaces that are not buildings.")
+        ALLOW_CAVES = b.comment("true = ANY roofed spot counts as indoors (caves included) and the building check below is skipped.")
                 .define("allowCaves", false);
-        BUILDING_MAX_DEPTH = b.comment("A roofed spot is only a 'building' if the surface is at most this many blocks above it.",
-                        "Anything deeper counts as underground/cave.")
-                .defineInRange("buildingMaxDepth", 12, 3, 64);
-        BUILDING_MIN_BLOCKS = b.comment("A roofed spot is only a 'building' if at least this many man-made blocks (planks, bricks, glass, doors,",
-                        "furniture...) are within 3 blocks. Lower = more places count as buildings, higher = stricter.")
-                .defineInRange("buildingMinBlocks", 10, 1, 150);
+        COLUMN_SAMPLES = b.comment("For indoor spawns: how many random columns of the chosen region are searched per attempt.",
+                        "Higher = indoor spawns happen more reliably when buildings are small or far apart.")
+                .defineInRange("columnSamples", 48, 4, 400);
+        CEILING_HEIGHT = b.comment("A building needs a ceiling within this many blocks above the floor.")
+                .defineInRange("ceilingSearchHeight", 16, 3, 64);
+        ENCLOSURE_RADIUS = b.comment("Building check: walls are looked for in 8 directions up to this many blocks away.")
+                .defineInRange("enclosureRadius", 10, 3, 32);
+        MIN_ENCLOSED_RAYS = b.comment("Building check: how many of the 8 directions must hit a wall within enclosureRadius.",
+                        "Lower = ruins and open-sided buildings count too.")
+                .defineInRange("minEnclosedRays", 5, 1, 8);
+        MIN_MAN_MADE_RATIO = b.comment("Building check (materials): share of the floor, ceiling and wall blocks around a spot that must NOT be natural",
+                        "(stone, dirt, sand, ores, logs, leaves...). EVERY block that is not natural counts as man-made, including all modded blocks.")
+                .defineInRange("minManMadeRatio", 0.5, 0.0, 1.0);
+        DETECT_BY_SHAPE = b.comment("Building check (shape): a room with a flat floor, a flat ceiling and walls around it counts as a building",
+                        "even if it is built from blocks that look natural (plain stone, logs, dirt, a modded stone...).")
+                .define("detectByShape", true);
+        MAX_NATURAL_COVER = b.comment("A room with more than this many natural blocks (rock, dirt...) above it is underground (a cave, mine,",
+                        "stronghold) and is not a building, unless its walls are clearly man-made.")
+                .defineInRange("maxNaturalCover", 6, 0, 64);
+        NATURAL_BLOCKS = b.comment("Extra blocks that should ALWAYS count as natural terrain. Entries: \"modid:block\", \"modid:*\" (whole mod) or \"#modid:tag\".",
+                        "Use this for modded stone/dirt/ore blocks that make up caves in your world.")
+                .defineListAllowEmpty("naturalBlocks", List.<String>of(), o -> o instanceof String);
+        BUILDING_BLOCKS = b.comment("Extra blocks that should ALWAYS count as man-made. Same entry format as naturalBlocks.",
+                        "Wins over naturalBlocks and over the built-in natural list. Example: [\"mymod:*\", \"#forge:cobblestone\"]")
+                .defineListAllowEmpty("buildingBlocks", List.<String>of(), o -> o instanceof String);
         b.pop();
 
         b.push("vanilla_blocking");
@@ -115,6 +149,9 @@ public class ZSConfig {
                 .define("blockVanillaHostiles", true);
         BLOCK_PHANTOMS = b.comment("Also block phantoms (they spawn through a special system).")
                 .define("blockPhantoms", true);
+        BLOCK_REINFORCEMENTS = b.comment("Stop zombies from calling in extra zombies when they are hit. Those extra zombies are not part of any",
+                        "region budget, so they would appear in areas you already cleared.")
+                .define("blockZombieReinforcements", true);
         b.pop();
 
         b.push("time");
