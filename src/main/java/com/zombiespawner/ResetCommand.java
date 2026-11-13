@@ -74,7 +74,7 @@ public class ResetCommand {
         else if (Spots.isStandable(level, p)) floor = p;
 
         long key = RegionData.key(p.getX(), p.getZ(), ZSConfig.REGION_SIZE.get());
-        say(src, "[ZombieSpawner] " + RegionData.get(level).describe(level, key));
+        say(src, "[ZombieSpawner] " + RegionData.get(level).describe(key));
 
         if (floor == null) {
             say(src, "[ZombieSpawner] Can't find a standable floor under you (stand on solid ground with 2 blocks of air above).");

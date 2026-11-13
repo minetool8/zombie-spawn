@@ -99,7 +99,8 @@ public class HiddenSpawner {
         AABB box = player.getBoundingBox().inflate(maxD + 16);
         int nearby = level.getEntitiesOfClass(Mob.class, box,
                 m -> m.isAlive() && m.getType() == type).size();
-        if (nearby >= ZSConfig.MAX_PER_PLAYER.get()) return;
+        int cap = dynamicCap(data, player, size, maxD);
+        if (nearby >= cap) return;
 
         RandomSource rnd = level.random;
         boolean frontier = ZSConfig.FRONTIER_ENABLED.get() && rnd.nextDouble() < ZSConfig.FRONTIER_CHANCE.get();
@@ -108,6 +109,10 @@ public class HiddenSpawner {
         int vr = ZSConfig.VERTICAL_RANGE.get();
         int top = Math.min(level.getMaxBuildHeight() - 4, py + vr);
         int bottom = Math.max(level.getMinBuildHeight() + 1, py - vr);
+
+        int spawned = 0;
+        int scans = 0;
+        int maxSpawns = ZSConfig.SPAWNS_PER_CYCLE.get();
 
         for (int i = 0; i < ZSConfig.ATTEMPTS.get(); i++) {
             double angle = rnd.nextDouble() * Math.PI * 2.0;
@@ -123,10 +128,15 @@ public class HiddenSpawner {
             if (frontier) {
                 // only truly untouched land: never near anywhere the player has been or has cleared
                 if (data.nearVisited(key) || data.nearCleared(key)) continue;
-            } else if (wantOpen) {
-                if (data.isCleared(key) || data.getOpen(level, key) <= 0) continue;
             } else {
-                if (data.isCleared(key) || data.getIndoor(level, key) <= 0) continue;
+                if (data.isCleared(key)) continue;
+                if (!data.isKnown(key)) {
+                    // first time we need this region: measure how built-up it is (limited per cycle to stay cheap)
+                    if (scans >= 3) continue;
+                    scans++;
+                    if (!measureRegion(level, data, key, size, rnd)) continue;
+                }
+                if ((wantOpen ? data.getOpen(key) : data.getIndoor(key)) <= 0) continue;
             }
 
             BlockPos floor = wantOpen
@@ -136,10 +146,47 @@ public class HiddenSpawner {
 
             Vec3 feet = new Vec3(floor.getX() + 0.5, Spots.feetY(level, floor), floor.getZ() + 0.5);
             if (spawnAt(level, type, feet, rnd, key, frontier, wantOpen)) {
-                if (!frontier) data.spawned(key, wantOpen);
-                return; // one per player per cycle
+                if (frontier) return;                 // wanderers: one per cycle
+                data.spawned(key, wantOpen);
+                spawned++;
+                if (spawned >= maxSpawns || nearby + spawned >= cap) return;
             }
         }
+    }
+
+    /** Measures a region's density and gives it its zombie budget. False if it can't be judged yet (not loaded). */
+    private boolean measureRegion(ServerLevel level, RegionData data, long key, int size, RandomSource rnd) {
+        int rx0 = RegionData.regionX(key) * size;
+        int rz0 = RegionData.regionZ(key) * size;
+        DensityScanner.Result r = DensityScanner.measure(level, rx0, rz0, size, rnd);
+        if (r == null) return false;
+        data.setRegion(level, key, r.score);
+        return true;
+    }
+
+    /**
+     * How many zombies may be around this player. Slides from baseZombiesPerPlayer (countryside) up to
+     * maxZombiesDense (big buildings, cities) using the density of the best-scoring regions in range.
+     */
+    private int dynamicCap(RegionData data, ServerPlayer player, int size, int maxD) {
+        int base = ZSConfig.BASE_PER_PLAYER.get();
+        int dense = Math.max(ZSConfig.DENSE_PER_PLAYER.get(), base);
+        if (dense == base) return base;
+
+        int pr = Math.floorDiv(player.getBlockX(), size), pz = Math.floorDiv(player.getBlockZ(), size);
+        int span = maxD / size + 1;
+        double b1 = 0, b2 = 0, b3 = 0;   // three highest region scores
+        for (int dx = -span; dx <= span; dx++) {
+            for (int dz = -span; dz <= span; dz++) {
+                double d = data.getDensity(RegionData.regionKey(pr + dx, pz + dz));
+                if (d < 0) continue;
+                if (d > b1) { b3 = b2; b2 = b1; b1 = d; }
+                else if (d > b2) { b3 = b2; b2 = d; }
+                else if (d > b3) { b3 = d; }
+            }
+        }
+        double score = (b1 + b2 + b3) / 3.0;
+        return base + (int) Math.round((dense - base) * score);
     }
 
     /** One random column in the open air. */

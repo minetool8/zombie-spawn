@@ -17,7 +17,9 @@ public class ZSConfig {
     public static final ForgeConfigSpec.IntValue MIN_DIST;
     public static final ForgeConfigSpec.IntValue MAX_DIST;
     public static final ForgeConfigSpec.IntValue VERTICAL_RANGE;
-    public static final ForgeConfigSpec.IntValue MAX_PER_PLAYER;
+    public static final ForgeConfigSpec.IntValue BASE_PER_PLAYER;
+    public static final ForgeConfigSpec.IntValue DENSE_PER_PLAYER;
+    public static final ForgeConfigSpec.IntValue SPAWNS_PER_CYCLE;
     public static final ForgeConfigSpec.IntValue DESPAWN_DIST;
     public static final ForgeConfigSpec.BooleanValue STRICT_LOS;
     public static final ForgeConfigSpec.IntValue VIEW_CONE;
@@ -27,8 +29,9 @@ public class ZSConfig {
 
     // --- regions ---
     public static final ForgeConfigSpec.IntValue REGION_SIZE;
-    public static final ForgeConfigSpec.IntValue MIN_INDOOR;
-    public static final ForgeConfigSpec.IntValue MAX_INDOOR;
+    public static final ForgeConfigSpec.IntValue DENSE_INDOOR;
+    public static final ForgeConfigSpec.DoubleValue DENSE_FLOORS;
+    public static final ForgeConfigSpec.IntValue DENSITY_SAMPLES;
     public static final ForgeConfigSpec.IntValue MIN_OPEN;
     public static final ForgeConfigSpec.IntValue MAX_OPEN;
     public static final ForgeConfigSpec.DoubleValue OPEN_CHANCE;
@@ -77,8 +80,13 @@ public class ZSConfig {
                 .defineInRange("maxDistance", 64, 16, 128);
         VERTICAL_RANGE = b.comment("How far above/below the player (blocks) a zombie may be placed.")
                 .defineInRange("verticalRange", 24, 4, 128);
-        MAX_PER_PLAYER = b.comment("Max spawned zombies within range of one player. Spawning pauses at this cap.")
-                .defineInRange("maxZombiesPerPlayer", 5, 1, 500);
+        BASE_PER_PLAYER = b.comment("Max spawned zombies around one player in sparse areas (villages, countryside).")
+                .defineInRange("baseZombiesPerPlayer", 10, 1, 500);
+        DENSE_PER_PLAYER = b.comment("Max spawned zombies around one player in the densest areas (big multi-floor buildings, cities).",
+                        "The real cap slides between baseZombiesPerPlayer and this number depending on how built-up the area around you is.")
+                .defineInRange("maxZombiesDense", 25, 1, 500);
+        SPAWNS_PER_CYCLE = b.comment("Max zombies spawned per player per spawn cycle (lets dense areas fill up faster).")
+                .defineInRange("maxSpawnsPerCycle", 2, 1, 20);
         DESPAWN_DIST = b.comment("Zombies spawned by this mod are removed when no player is within this many blocks.")
                 .defineInRange("despawnDistance", 128, 32, 512);
         OWN_DESPAWN = b.comment("Mark spawned zombies as persistent (vanilla won't random-despawn them) and use despawnDistance instead.")
@@ -98,15 +106,20 @@ public class ZSConfig {
         b.push("regions");
         REGION_SIZE = b.comment("Side length (blocks) of a square region. Each region owns a fixed zombie budget.")
                 .defineInRange("regionSize", 32, 8, 256);
-        MIN_INDOOR = b.comment("Zombies per region that live INSIDE BUILDINGS. Random between min and max, rolled once per region.",
+        DENSE_INDOOR = b.comment("Zombies INSIDE BUILDINGS for the densest possible region. Every region gets a share of this depending on how",
+                        "built-up it is: empty land gets 0, a village a few, a dense city or a tall many-floor building the full amount.",
                         "Killed zombies are never replaced. When every zombie of a region is dead, the region is CLEARED for good.")
-                .defineInRange("minIndoorPerRegion", 1, 0, 200);
-        MAX_INDOOR = b.defineInRange("maxIndoorPerRegion", 3, 0, 200);
+                .defineInRange("denseIndoorPerRegion", 12, 1, 200);
+        DENSE_FLOORS = b.comment("Region density score: average number of walkable floors per column that counts as 'fully dense'.",
+                        "Lower = more regions count as dense (more zombies), higher = only the very tallest/densest areas do.")
+                .defineInRange("denseFloorsPerColumn", 4.0, 0.5, 20.0);
+        DENSITY_SAMPLES = b.comment("How many random columns are sampled to measure a region's density (measured once, then saved).")
+                .defineInRange("densitySamples", 64, 16, 512);
         MIN_OPEN = b.comment("Zombies per region that stand OUTSIDE in the open. Keep this tiny.")
                 .defineInRange("minOpenPerRegion", 0, 0, 200);
         MAX_OPEN = b.defineInRange("maxOpenPerRegion", 1, 0, 200);
         OPEN_CHANCE = b.comment("Chance that a spawn attempt targets the open instead of a building (when the region has open budget).")
-                .defineInRange("openSpawnChance", 0.15, 0.0, 1.0);
+                .defineInRange("openAttemptChance", 0.08, 0.0, 1.0);
         FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie in the open at the far edge of your range, but only in land",
                         "you have NEVER been near (the region and all 8 regions around it must be unvisited and not cleared).")
                 .define("frontierWanderers", true);
