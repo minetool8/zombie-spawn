@@ -5,8 +5,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -15,58 +15,61 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Decides whether a standing spot is INSIDE A BUILDING, without needing to know the blocks it is made of.
+ * Decides whether a standing spot is INSIDE A BUILDING by combining several independent signals into a score.
+ * No single check can reject a room on its own, a real room just needs enough evidence.
+ * Furniture is NOT used: empty buildings count exactly like furnished ones.
  *
- * It looks at the room instead of the materials:
- *  1. there is a ceiling above (leaves don't count)
- *  2. walls close in around the spot (8 rays at head height)
- *  3. it is not buried deep under natural rock (that would be a cave, mine or stronghold)
- *  4. EITHER most of the floor/ceiling/wall blocks are man-made (every non-natural block, modded or not)
- *     OR the room is regular: flat floor and flat ceiling (caves are never like that)
- *
- * Hand-built rooms pass on shape even when they are made of plain stone, dirt or logs.
+ * Required: a ceiling above, and at least 3 of 8 directions with a wall nearby.
+ * Points (max 8):
+ *   walls      0.5-2  how many of 8 directions hit a wall
+ *   material   0-2    share of floor/ceiling/wall blocks that are man-made (all non-natural blocks, modded included)
+ *   shape      0-2    flat floor + flat ceiling over the open cells around (caves never are)
+ *   volume     0-1    how many man-made blocks surround the spot
+ *   roofed     0-1    how much of the floor area around the spot has a ceiling
+ * A room counts when the score reaches indoorMinScore. Rooms buried under lots of natural rock are caves/mines
+ * and are rejected unless their walls are clearly man-made.
  */
 public final class BuildingDetector {
     private BuildingDetector() {}
 
     public static final class Result {
-        public boolean building;
-        public boolean roofed;
-        public boolean enclosed;
-        public boolean underground;
-        public boolean materialOk;
-        public boolean shapeOk;
-        public int ceilingHeight;       // blocks from floor to ceiling block, 0 = none found
-        public int hits;                // rays (of 8) that hit a wall
-        public int naturalCover;        // natural blocks above the ceiling
-        public int manMade;
-        public int samples;
-        public double ratio;
-        public int cells, flatFloor, flatCeiling;
+        public boolean building, roofed, enclosed, underground, materialOk, shapeOk, incomplete;
+        public int ceilingHeight, hits, naturalCover, manMade, samples;
+        public int cells, flatFloor, flatCeiling, coverCells, coverRoofed;
+        public int manBlocks;
+        public double ratio, score;
+        public double pWalls, pMaterial, pShape, pVolume, pRoofed;
         public String verdict = "";
+        /** short, stable reason used for statistics */
+        public String reason = "";
         public final List<String> surfaces = new ArrayList<>();
     }
 
     private static final int NONE = Integer.MIN_VALUE;
+    private static final int MIN_WALL_HITS = 3;
 
     public static Result analyse(ServerLevel level, BlockPos floor, Entity rayOwner) {
         Result r = new Result();
         int radius = ZSConfig.ENCLOSURE_RADIUS.get();
         int ceilSearch = ZSConfig.CEILING_HEIGHT.get();
-        int reach = radius + 2;
+        int reach = Math.max(radius, 5) + 2;
 
         // never force-load chunks just to look at a room
         if (!level.hasChunksAt(floor.offset(-reach, 0, -reach), floor.offset(reach, 0, reach))) {
+            r.incomplete = true;
+            r.reason = "chunks not loaded";
             r.verdict = "the chunks around this spot are not loaded";
             return r;
         }
 
         int fx = floor.getX(), fy = floor.getY(), fz = floor.getZ();
         BlockState floorState = level.getBlockState(floor);
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
 
-        // 1. ceiling
+        // ---- 1. ceiling (required)
         int ceilY = findCeiling(level, fx, fz, fy + 3, fy + 2 + ceilSearch);
         if (ceilY == NONE) {
+            r.reason = "open sky / no ceiling";
             r.verdict = "no ceiling within " + ceilSearch + " blocks (open sky)";
             return r;
         }
@@ -74,7 +77,7 @@ public final class BuildingDetector {
         r.ceilingHeight = ceilY - fy;
         BlockState ceilState = level.getBlockState(new BlockPos(fx, ceilY, fz));
 
-        // 2. walls: 8 rays at head height
+        // ---- 2. walls: 8 rays at head height (at least 3 required)
         double cx = fx + 0.5, cz = fz + 0.5, cy = Spots.feetY(level, floor) + 1.5;
         List<BlockState> walls = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
@@ -88,12 +91,18 @@ public final class BuildingDetector {
                 walls.add(level.getBlockState(hit.getBlockPos()));
             }
         }
-        r.enclosed = r.hits >= ZSConfig.MIN_ENCLOSED_RAYS.get();
+        int minWalls = ZSConfig.MIN_ENCLOSED_RAYS.get();
+        r.enclosed = r.hits >= minWalls;
+        if (r.hits < MIN_WALL_HITS) {
+            r.reason = "too few walls";
+            r.verdict = "only " + r.hits + "/8 directions have a wall within " + radius + " blocks (need at least " + MIN_WALL_HITS + ")";
+            return r;
+        }
+        r.pWalls = r.enclosed ? 2.0 : (r.hits >= Math.max(MIN_WALL_HITS, minWalls - 2) ? 1.0 : 0.5);
 
-        // 3. natural rock/dirt above the ceiling
+        // ---- 3. natural rock/dirt above the ceiling
         int h = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, fx, fz);
         int endY = Math.min(h, ceilY + 96);
-        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
         for (int y = ceilY; y < endY; y++) {
             m.set(fx, y, fz);
             BlockState s = level.getBlockState(m);
@@ -101,7 +110,7 @@ public final class BuildingDetector {
             if (BlockClassifier.isNatural(s)) r.naturalCover++;
         }
 
-        // 4a. materials of the surfaces around the spot
+        // ---- 4. materials of floor, ceiling and walls
         r.samples = 2 + walls.size();
         r.surfaces.add("floor   " + BlockClassifier.describe(floorState));
         r.surfaces.add("ceiling " + BlockClassifier.describe(ceilState));
@@ -111,17 +120,16 @@ public final class BuildingDetector {
             r.surfaces.add("wall    " + BlockClassifier.describe(w));
             if (!BlockClassifier.isNatural(w)) r.manMade++;
         }
-        r.ratio = r.samples == 0 ? 0.0 : (double) r.manMade / r.samples;
-        r.materialOk = r.ratio >= ZSConfig.MIN_MAN_MADE_RATIO.get();
+        r.ratio = (double) r.manMade / r.samples;
+        double minRatio = ZSConfig.MIN_MAN_MADE_RATIO.get();
+        r.materialOk = r.ratio >= minRatio;
+        r.pMaterial = r.materialOk ? 2.0 : (r.ratio >= minRatio * 0.6 ? 1.0 : 0.0);
 
-        // 4b. shape: flat floor + flat ceiling over the open cells around the spot (5x5)
+        // ---- 5. shape: flat floor + flat ceiling over the open cells around the spot (5x5)
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 int x = fx + dx, z = fz + dz;
-                m.set(x, fy + 1, z);
-                if (!level.getBlockState(m).getCollisionShape(level, m).isEmpty()) continue;
-                m.set(x, fy + 2, z);
-                if (!level.getBlockState(m).getCollisionShape(level, m).isEmpty()) continue;
+                if (!openCell(level, m, x, fy, z)) continue;
                 r.cells++;
                 m.set(x, fy, z);
                 BlockState fl = level.getBlockState(m);
@@ -131,28 +139,68 @@ public final class BuildingDetector {
         }
         r.shapeOk = ZSConfig.DETECT_BY_SHAPE.get() && r.cells >= 4
                 && r.flatFloor >= r.cells * 0.85 && r.flatCeiling >= r.cells * 0.8;
+        r.pShape = r.shapeOk ? 2.0 : 0.0;
 
-        // verdict
+        // ---- 6. how much of the floor area around the spot is roofed (9x9)
+        for (int dx = -4; dx <= 4; dx++) {
+            for (int dz = -4; dz <= 4; dz++) {
+                int x = fx + dx, z = fz + dz;
+                if (!openCell(level, m, x, fy, z)) continue;
+                r.coverCells++;
+                if (findCeiling(level, x, z, fy + 3, fy + 2 + ceilSearch) != NONE) r.coverRoofed++;
+            }
+        }
+        r.pRoofed = (r.coverCells >= 6 && r.coverRoofed >= r.coverCells * 0.85) ? 1.0 : 0.0;
+
+        // ---- 7. man-made volume within 5 blocks (11x11x4)
+        for (int dx = -5; dx <= 5; dx++) {
+            for (int dz = -5; dz <= 5; dz++) {
+                for (int dy = 0; dy <= 3; dy++) {
+                    m.set(fx + dx, fy + dy, fz + dz);
+                    BlockState s = level.getBlockState(m);
+                    if (s.isAir() || !s.getFluidState().isEmpty()) continue;
+                    if (!BlockClassifier.isNatural(s)) r.manBlocks++;
+                }
+            }
+        }
+        r.pVolume = r.manBlocks >= 40 ? 1.0 : (r.manBlocks >= 20 ? 0.5 : 0.0);
+
+        r.score = r.pWalls + r.pMaterial + r.pShape + r.pVolume + r.pRoofed;
+
+        // ---- verdict
         boolean clearlyBuilt = r.ratio >= 0.75;
         r.underground = r.naturalCover > ZSConfig.MAX_NATURAL_COVER.get() && !clearlyBuilt;
+        double need = ZSConfig.INDOOR_MIN_SCORE.get();
 
-        if (!r.enclosed) {
-            r.verdict = "not enclosed: only " + r.hits + "/8 directions have a wall within " + radius
-                    + " blocks (need " + ZSConfig.MIN_ENCLOSED_RAYS.get() + ")";
-        } else if (r.underground) {
+        if (r.underground) {
+            r.reason = "underground";
             r.verdict = "underground: " + r.naturalCover + " natural blocks above it (limit "
-                    + ZSConfig.MAX_NATURAL_COVER.get() + ") and the walls are not clearly man-made";
-        } else if (r.materialOk || r.shapeOk) {
+                    + ZSConfig.MAX_NATURAL_COVER.get() + ") and it is not clearly built";
+        } else if (r.score >= need) {
             r.building = true;
-            r.verdict = r.materialOk ? "man-made materials" : "regular room shape (flat floor and ceiling)";
+            r.reason = "building";
+            r.verdict = "score " + fmt(r.score) + " >= " + fmt(need);
         } else {
-            r.verdict = "looks natural: only " + r.manMade + "/" + r.samples + " man-made surfaces and the room shape is irregular";
+            r.reason = "score too low";
+            r.verdict = "score " + fmt(r.score) + " is below " + fmt(need) + " (looks natural or too bare)";
         }
         return r;
     }
 
+    public static String fmt(double d) {
+        return String.format("%.1f", d);
+    }
+
+    /** feet and head blocks at this column are free: an open cell of the room at the floor's height. */
+    private static boolean openCell(ServerLevel level, BlockPos.MutableBlockPos m, int x, int fy, int z) {
+        m.set(x, fy + 1, z);
+        if (!level.getBlockState(m).getCollisionShape(level, m).isEmpty()) return false;
+        m.set(x, fy + 2, z);
+        return level.getBlockState(m).getCollisionShape(level, m).isEmpty();
+    }
+
     /** First block above that you would bump your head on (leaves are ignored). */
-    private static int findCeiling(ServerLevel level, int x, int z, int fromY, int toY) {
+    static int findCeiling(ServerLevel level, int x, int z, int fromY, int toY) {
         BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
         int max = Math.min(toY, level.getMaxBuildHeight() - 1);
         for (int y = fromY; y <= max; y++) {

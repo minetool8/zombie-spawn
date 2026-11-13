@@ -40,11 +40,14 @@ public class HiddenSpawner {
     public static final String WANDER_TAG = "zs_wander";
     public static final String OPEN_TAG = "zs_open";
 
-    /** Most building analyses done for one spawn attempt (keeps lag away). */
-    private static final int MAX_ANALYSES_PER_ATTEMPT = 8;
+    /** Region scans allowed per player per spawn cycle (keeps lag away). */
+    private static final int MAX_SCANS_PER_CYCLE = 1;
+    /** A region's room list is refreshed after this many ticks (buildings get built and destroyed). */
+    private static final long RESCAN_TICKS = 12000L;
 
     private int tickCounter = 0;
-    private boolean warnedBadId = false;
+    private int scansThisCycle = 0;
+    private static boolean warnedBadId = false;
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
@@ -111,10 +114,12 @@ public class HiddenSpawner {
         int bottom = Math.max(level.getMinBuildHeight() + 1, py - vr);
 
         int spawned = 0;
-        int scans = 0;
+        scansThisCycle = 0;
+        SpawnStats.cycles++;
         int maxSpawns = ZSConfig.SPAWNS_PER_CYCLE.get();
 
         for (int i = 0; i < ZSConfig.ATTEMPTS.get(); i++) {
+            SpawnStats.attempts++;
             double angle = rnd.nextDouble() * Math.PI * 2.0;
             double dist = frontier
                     ? Math.max(minD, maxD - rnd.nextDouble() * 8.0)      // far edge of range
@@ -129,38 +134,50 @@ public class HiddenSpawner {
                 // only truly untouched land: never near anywhere the player has been or has cleared
                 if (data.nearVisited(key) || data.nearCleared(key)) continue;
             } else {
-                if (data.isCleared(key)) continue;
-                if (!data.isKnown(key)) {
-                    // first time we need this region: measure how built-up it is (limited per cycle to stay cheap)
-                    if (scans >= 3) continue;
-                    scans++;
-                    if (!measureRegion(level, data, key, size, rnd)) continue;
-                }
-                if ((wantOpen ? data.getOpen(key) : data.getIndoor(key)) <= 0) continue;
+                if (data.isCleared(key)) { SpawnStats.regionCleared++; continue; }
+                if (!prepare(level, player, data, key, size, !wantOpen, rnd)) { SpawnStats.regionNotReady++; continue; }
+                if ((wantOpen ? data.getOpen(key) : data.getIndoor(key)) <= 0) { SpawnStats.regionNoBudget++; continue; }
             }
 
             BlockPos floor = wantOpen
                     ? pickOpenSpot(level, player, x0, z0, bottom, top, rnd, minD)
-                    : pickIndoorSpot(level, player, x0, z0, size, bottom, top, rnd, minD, maxD);
-            if (floor == null) continue;
+                    : pickIndoorSpot(level, player, data, key, size, vr, rnd, minD, maxD, type);
+            if (floor == null) { SpawnStats.regionNoSpot++; continue; }
 
             Vec3 feet = new Vec3(floor.getX() + 0.5, Spots.feetY(level, floor), floor.getZ() + 0.5);
             if (spawnAt(level, type, feet, rnd, key, frontier, wantOpen)) {
-                if (frontier) return;                 // wanderers: one per cycle
+                if (frontier) { SpawnStats.spawnedWanderer++; return; }   // wanderers: one per cycle
+                if (wantOpen) SpawnStats.spawnedOpen++; else SpawnStats.spawnedIndoor++;
                 data.spawned(key, wantOpen);
                 spawned++;
                 if (spawned >= maxSpawns || nearby + spawned >= cap) return;
+            } else {
+                SpawnStats.spawnFailed++;
             }
         }
     }
 
-    /** Measures a region's density and gives it its zombie budget. False if it can't be judged yet (not loaded). */
-    private boolean measureRegion(ServerLevel level, RegionData data, long key, int size, RandomSource rnd) {
-        int rx0 = RegionData.regionX(key) * size;
-        int rz0 = RegionData.regionZ(key) * size;
-        DensityScanner.Result r = DensityScanner.measure(level, rx0, rz0, size, rnd);
-        if (r == null) return false;
-        data.setRegion(level, key, r.score);
+    /**
+     * Makes sure the region has been scanned: gives it its zombie budget the first time, and (for indoor spawns)
+     * keeps its list of verified rooms fresh. Returns false when it can't be done now (not loaded / scan limit).
+     */
+    private boolean prepare(ServerLevel level, ServerPlayer player, RegionData data, long key, int size,
+                            boolean needRooms, RandomSource rnd) {
+        boolean known = data.isKnown(key);
+        RegionScanner.Scan sc = data.getScan(key);
+        boolean stale = sc == null || level.getGameTime() - sc.time > RESCAN_TICKS;
+        if (known && (!needRooms || !stale)) return true;
+
+        if (scansThisCycle >= MAX_SCANS_PER_CYCLE) return known && sc != null;   // use the old list for now
+        scansThisCycle++;
+        SpawnStats.scans++;
+        RegionScanner.Scan fresh = RegionScanner.scan(level, key, size, rnd, player);
+        if (fresh == null) {
+            SpawnStats.scansFailedNotLoaded++;
+            return known && sc != null;
+        }
+        data.putScan(key, fresh);
+        if (!known) data.setRegion(level, key, fresh.zombies, fresh.density);
         return true;
     }
 
@@ -203,42 +220,36 @@ public class HiddenSpawner {
         return null;
     }
 
-    /**
-     * Searches the WHOLE region the attempt landed in (not a single column) for the inside of a building.
-     * Buildings are small, so probing one random column almost never finds one.
-     */
-    private BlockPos pickIndoorSpot(ServerLevel level, ServerPlayer player, int x0, int z0, int size,
-                                    int bottom, int top, RandomSource rnd, int minD, int maxD) {
-        int rx0 = Math.floorDiv(x0, size) * size;
-        int rz0 = Math.floorDiv(z0, size) * size;
+    /** Picks one of the region's verified rooms: far enough, out of sight, and not on top of another zombie. */
+    private BlockPos pickIndoorSpot(ServerLevel level, ServerPlayer player, RegionData data, long key, int size,
+                                    int vr, RandomSource rnd, int minD, int maxD, EntityType<?> type) {
+        RegionScanner.Scan sc = data.getScan(key);
+        if (sc == null || sc.spots.isEmpty()) return null;
+
         double minSq = (double) minD * minD;
         double maxReach = maxD + size / 2.0;
         double maxSq = maxReach * maxReach;
-        boolean anyRoof = ZSConfig.ALLOW_CAVES.get();
-        int analyses = 0;
+        int py = player.getBlockY();
 
-        for (int s = 0; s < ZSConfig.COLUMN_SAMPLES.get(); s++) {
-            int x = rx0 + rnd.nextInt(size);
-            int z = rz0 + rnd.nextInt(size);
-            double dx = x + 0.5 - player.getX();
-            double dz = z + 0.5 - player.getZ();
+        for (int t = 0; t < 16; t++) {
+            BlockPos c = sc.spots.get(rnd.nextInt(sc.spots.size()));
+            if (Math.abs(c.getY() - py) > vr) { SpawnStats.spotVertical++; continue; }
+            double dx = c.getX() + 0.5 - player.getX();
+            double dz = c.getZ() + 0.5 - player.getZ();
             double d2 = dx * dx + dz * dz;
-            if (d2 < minSq || d2 > maxSq) continue;
-            if (!columnUsable(level, player, x, z)) continue;
-
-            List<BlockPos> roofed = new ArrayList<>();
-            List<BlockPos> open = new ArrayList<>();
-            scanColumn(level, x, z, bottom, top, roofed, open);
-
-            for (int t = 0; t < 2 && !roofed.isEmpty(); t++) {
-                BlockPos c = roofed.remove(rnd.nextInt(roofed.size()));
-                if (!acceptable(level, player, c, minD)) continue;
-                if (anyRoof) return c;
-                if (++analyses > MAX_ANALYSES_PER_ATTEMPT) return null;
-                if (BuildingDetector.analyse(level, c, player).building) return c;
-            }
+            if (d2 < minSq || d2 > maxSq) { SpawnStats.spotDistance++; continue; }
+            if (!level.hasChunkAt(c)) continue;
+            if (!Spots.isStandable(level, c)) { SpawnStats.spotStale++; continue; }
+            if (crowded(level, c, type)) { SpawnStats.spotCrowded++; continue; }
+            if (!acceptable(level, player, c, minD)) { SpawnStats.spotHidden++; continue; }
+            return c;
         }
         return null;
+    }
+
+    private boolean crowded(ServerLevel level, BlockPos c, EntityType<?> type) {
+        return !level.getEntitiesOfClass(Mob.class, new AABB(c).inflate(3.0),
+                m -> m.isAlive() && m.getType() == type).isEmpty();
     }
 
     private boolean columnUsable(ServerLevel level, ServerPlayer player, int x, int z) {
@@ -265,7 +276,7 @@ public class HiddenSpawner {
         return isHidden(level, player, feet);
     }
 
-    private boolean spawnAt(ServerLevel level, EntityType<?> type, Vec3 pos, RandomSource rnd,
+    static boolean spawnAt(ServerLevel level, EntityType<?> type, Vec3 pos, RandomSource rnd,
                             long regionKey, boolean wanderer, boolean isOpen) {
         Entity entity = type.create(level);
         if (entity == null) return false;
@@ -351,7 +362,7 @@ public class HiddenSpawner {
 
     // ------------------------------------------------------------------ misc
 
-    private EntityType<?> resolveType() {
+    static EntityType<?> resolveType() {
         ResourceLocation id = ResourceLocation.tryParse(ZSConfig.ENTITY_ID.get());
         if (id != null && ForgeRegistries.ENTITY_TYPES.containsKey(id)) {
             return ForgeRegistries.ENTITY_TYPES.getValue(id);

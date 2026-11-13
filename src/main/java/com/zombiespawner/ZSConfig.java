@@ -30,8 +30,8 @@ public class ZSConfig {
     // --- regions ---
     public static final ForgeConfigSpec.IntValue REGION_SIZE;
     public static final ForgeConfigSpec.IntValue DENSE_INDOOR;
-    public static final ForgeConfigSpec.DoubleValue DENSE_FLOORS;
-    public static final ForgeConfigSpec.IntValue DENSITY_SAMPLES;
+    public static final ForgeConfigSpec.IntValue AREA_PER_ZOMBIE;
+    public static final ForgeConfigSpec.IntValue SCAN_CANDIDATES;
     public static final ForgeConfigSpec.IntValue MIN_OPEN;
     public static final ForgeConfigSpec.IntValue MAX_OPEN;
     public static final ForgeConfigSpec.DoubleValue OPEN_CHANCE;
@@ -40,7 +40,7 @@ public class ZSConfig {
 
     // --- where zombies may stand / what counts as a building ---
     public static final ForgeConfigSpec.BooleanValue ALLOW_CAVES;
-    public static final ForgeConfigSpec.IntValue COLUMN_SAMPLES;
+    public static final ForgeConfigSpec.DoubleValue INDOOR_MIN_SCORE;
     public static final ForgeConfigSpec.IntValue CEILING_HEIGHT;
     public static final ForgeConfigSpec.IntValue ENCLOSURE_RADIUS;
     public static final ForgeConfigSpec.IntValue MIN_ENCLOSED_RAYS;
@@ -110,11 +110,13 @@ public class ZSConfig {
                         "built-up it is: empty land gets 0, a village a few, a dense city or a tall many-floor building the full amount.",
                         "Killed zombies are never replaced. When every zombie of a region is dead, the region is CLEARED for good.")
                 .defineInRange("denseIndoorPerRegion", 12, 1, 200);
-        DENSE_FLOORS = b.comment("Region density score: average number of walkable floors per column that counts as 'fully dense'.",
-                        "Lower = more regions count as dense (more zombies), higher = only the very tallest/densest areas do.")
-                .defineInRange("denseFloorsPerColumn", 4.0, 0.5, 20.0);
-        DENSITY_SAMPLES = b.comment("How many random columns are sampled to measure a region's density (measured once, then saved).")
-                .defineInRange("densitySamples", 64, 16, 512);
+        AREA_PER_ZOMBIE = b.comment("Indoor floor area (blocks) that earns one zombie. Each region is scanned for rooms; the zombies it gets",
+                        "= verified indoor floor area / this number (every floor of a tall building counts), up to denseIndoorPerRegion.",
+                        "Lower = more zombies in buildings.")
+                .defineInRange("indoorAreaPerZombie", 100, 10, 5000);
+        SCAN_CANDIDATES = b.comment("How many candidate rooms are tested per region scan (the scan is done once per region, then refreshed every few minutes).",
+                        "Higher = more reliable in huge buildings, slightly more work during the scan.")
+                .defineInRange("scanCandidates", 80, 10, 400);
         MIN_OPEN = b.comment("Zombies per region that stand OUTSIDE in the open. Keep this tiny.")
                 .defineInRange("minOpenPerRegion", 0, 0, 200);
         MAX_OPEN = b.defineInRange("maxOpenPerRegion", 1, 0, 200);
@@ -130,9 +132,11 @@ public class ZSConfig {
         b.push("placement");
         ALLOW_CAVES = b.comment("true = ANY roofed spot counts as indoors (caves included) and the building check below is skipped.")
                 .define("allowCaves", false);
-        COLUMN_SAMPLES = b.comment("For indoor spawns: how many random columns of the chosen region are searched per attempt.",
-                        "Higher = indoor spawns happen more reliably when buildings are small or far apart.")
-                .defineInRange("columnSamples", 48, 4, 400);
+        INDOOR_MIN_SCORE = b.comment("A roofed spot counts as a building room when its score reaches this (max 8). Points come from several",
+                        "independent signals: walls around it, man-made materials, regular room shape,",
+                        "man-made block count, and how much of the area around it is roofed. Furniture is never used,",
+                        "so empty buildings count too. Lower = more places count as buildings.")
+                .defineInRange("indoorMinScore", 3.5, 0.0, 10.0);
         CEILING_HEIGHT = b.comment("A building needs a ceiling within this many blocks above the floor.")
                 .defineInRange("ceilingSearchHeight", 16, 3, 64);
         ENCLOSURE_RADIUS = b.comment("Building check: walls are looked for in 8 directions up to this many blocks away.")

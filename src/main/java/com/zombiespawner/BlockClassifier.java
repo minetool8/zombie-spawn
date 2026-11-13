@@ -11,8 +11,10 @@ import net.minecraftforge.registries.ForgeRegistries;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -90,6 +92,9 @@ public final class BlockClassifier {
         }
     }
 
+    /** natural/man-made depends only on the block, so remember it (cleared when the config lists change) */
+    private static final Map<Block, Boolean> CACHE = new HashMap<>();
+
     private static List<String> lastNatural = null;
     private static List<String> lastBuilding = null;
     private static Rules naturalRules = new Rules();
@@ -100,17 +105,28 @@ public final class BlockClassifier {
         if (lastNatural == null || !lastNatural.equals(n)) {
             lastNatural = new ArrayList<>(n);
             naturalRules = Rules.parse(n);
+            CACHE.clear();
         }
         List<? extends String> b = ZSConfig.BUILDING_BLOCKS.get();
         if (lastBuilding == null || !lastBuilding.equals(b)) {
             lastBuilding = new ArrayList<>(b);
             buildingRules = Rules.parse(b);
+            CACHE.clear();
         }
     }
 
     /** True if this (non-air) block is natural terrain. False = man-made. */
     public static boolean isNatural(BlockState s) {
         refresh();
+        Block block = s.getBlock();
+        Boolean cached = CACHE.get(block);
+        if (cached != null) return cached;
+        boolean result = compute(s);
+        CACHE.put(block, result);
+        return result;
+    }
+
+    private static boolean compute(BlockState s) {
         ResourceLocation id = ForgeRegistries.BLOCKS.getKey(s.getBlock());
         if (buildingRules.matches(id, s)) return false;     // config: always man-made
         if (naturalRules.matches(id, s)) return true;       // config: always natural
