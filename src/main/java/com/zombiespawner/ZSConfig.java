@@ -51,6 +51,8 @@ public class ZSConfig {
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BUILDING_BLOCKS;
 
     // --- vanilla blocking ---
+    public static final ForgeConfigSpec.BooleanValue ONLY_ALLOWED;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> ALLOWED_MOBS;
     public static final ForgeConfigSpec.BooleanValue BLOCK_VANILLA_HOSTILES;
     public static final ForgeConfigSpec.BooleanValue BLOCK_PHANTOMS;
     public static final ForgeConfigSpec.BooleanValue BLOCK_REINFORCEMENTS;
@@ -162,7 +164,15 @@ public class ZSConfig {
         b.pop();
 
         b.push("vanilla_blocking");
-        BLOCK_VANILLA_HOSTILES = b.comment("Cancel natural + world-generation spawns of all hostile mobs (zombies included).")
+        ONLY_ALLOWED = b.comment("true = ONLY the mobs in allowedMobs can spawn. Every other mob is blocked from natural spawning, world generation,",
+                        "structures, patrols AND from being newly added to the world by anything else (spawn eggs, commands, other mods).",
+                        "Mobs that already exist in your map are left alone. Mobs spawned by this mod are always allowed.")
+                .define("onlyAllowedMobs", true);
+        ALLOWED_MOBS = b.comment("Mobs allowed to spawn. Animals here spawn the vanilla way. Hostile mobs here (zombie) are still NOT spawned by vanilla:",
+                        "they only come from this mod's spawner. Add e.g. \"minecraft:ender_dragon\" if your map needs something else.")
+                .defineListAllowEmpty("allowedMobs", List.of("minecraft:cow", "minecraft:sheep", "minecraft:chicken",
+                        "minecraft:wolf", "minecraft:zombie"), o -> o instanceof String);
+        BLOCK_VANILLA_HOSTILES = b.comment("Cancel vanilla natural + world-generation spawns of hostile mobs, even allowed ones (so zombies only come from this mod).")
                 .define("blockVanillaHostiles", true);
         BLOCK_PHANTOMS = b.comment("Also block phantoms (they spawn through a special system).")
                 .define("blockPhantoms", true);
