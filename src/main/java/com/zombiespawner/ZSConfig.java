@@ -29,14 +29,12 @@ public class ZSConfig {
 
     // --- regions ---
     public static final ForgeConfigSpec.IntValue REGION_SIZE;
-    public static final ForgeConfigSpec.IntValue DENSE_INDOOR;
-    public static final ForgeConfigSpec.IntValue AREA_PER_ZOMBIE;
+    public static final ForgeConfigSpec.IntValue MIN_PER_BUILDING;
+    public static final ForgeConfigSpec.IntValue MAX_PER_BUILDING;
+    public static final ForgeConfigSpec.IntValue MASSIVE_AREA;
+    public static final ForgeConfigSpec.IntValue FLOORS_FREE;
+    public static final ForgeConfigSpec.IntValue PER_EXTRA_FLOOR;
     public static final ForgeConfigSpec.IntValue SCAN_CANDIDATES;
-    public static final ForgeConfigSpec.IntValue MIN_OPEN;
-    public static final ForgeConfigSpec.IntValue MAX_OPEN;
-    public static final ForgeConfigSpec.DoubleValue OPEN_CHANCE;
-    public static final ForgeConfigSpec.BooleanValue FRONTIER_ENABLED;
-    public static final ForgeConfigSpec.DoubleValue FRONTIER_CHANCE;
 
     // --- where zombies may stand / what counts as a building ---
     public static final ForgeConfigSpec.BooleanValue ALLOW_CAVES;
@@ -82,11 +80,11 @@ public class ZSConfig {
                 .defineInRange("maxDistance", 64, 16, 128);
         VERTICAL_RANGE = b.comment("How far above/below the player (blocks) a zombie may be placed.")
                 .defineInRange("verticalRange", 24, 4, 128);
-        BASE_PER_PLAYER = b.comment("Max spawned zombies around one player in sparse areas (villages, countryside).")
-                .defineInRange("baseZombiesPerPlayer", 10, 1, 500);
+        BASE_PER_PLAYER = b.comment("Max spawned zombies around one player in quiet areas (small buildings, villages).")
+                .defineInRange("zombiesPerPlayerBase", 5, 1, 500);
         DENSE_PER_PLAYER = b.comment("Max spawned zombies around one player in the densest areas (big multi-floor buildings, cities).",
-                        "The real cap slides between baseZombiesPerPlayer and this number depending on how built-up the area around you is.")
-                .defineInRange("maxZombiesDense", 25, 1, 500);
+                        "The real cap slides between zombiesPerPlayerBase and this number depending on how big the buildings around you are.")
+                .defineInRange("zombiesPerPlayerMax", 12, 1, 500);
         SPAWNS_PER_CYCLE = b.comment("Max zombies spawned per player per spawn cycle (lets dense areas fill up faster).")
                 .defineInRange("maxSpawnsPerCycle", 2, 1, 20);
         DESPAWN_DIST = b.comment("Zombies spawned by this mod are removed when no player is within this many blocks.")
@@ -108,27 +106,22 @@ public class ZSConfig {
         b.push("regions");
         REGION_SIZE = b.comment("Side length (blocks) of a square region. Each region owns a fixed zombie budget.")
                 .defineInRange("regionSize", 32, 8, 256);
-        DENSE_INDOOR = b.comment("Zombies INSIDE BUILDINGS for the densest possible region. Every region gets a share of this depending on how",
-                        "built-up it is: empty land gets 0, a village a few, a dense city or a tall many-floor building the full amount.",
+        MIN_PER_BUILDING = b.comment("Zombies a region gets when it contains a building: the smallest amount (a small building).",
+                        "Zombies ONLY spawn inside buildings. Regions without a building get none.",
                         "Killed zombies are never replaced. When every zombie of a region is dead, the region is CLEARED for good.")
-                .defineInRange("denseIndoorPerRegion", 12, 1, 200);
-        AREA_PER_ZOMBIE = b.comment("Indoor floor area (blocks) that earns one zombie. Each region is scanned for rooms; the zombies it gets",
-                        "= verified indoor floor area / this number (every floor of a tall building counts), up to denseIndoorPerRegion.",
-                        "Lower = more zombies in buildings.")
-                .defineInRange("indoorAreaPerZombie", 100, 10, 5000);
+                .defineInRange("minZombiesPerRegion", 2, 1, 100);
+        MAX_PER_BUILDING = b.comment("The most zombies one region can get (a massive building).")
+                .defineInRange("maxZombiesPerRegion", 7, 1, 100);
+        MASSIVE_AREA = b.comment("Total indoor floor area (all floors added up) that counts as a massive building and earns maxZombiesPerRegion.",
+                        "A small house earns about the minimum; the amount grows with floor area up to this size.")
+                .defineInRange("massiveBuildingArea", 1500, 100, 100000);
+        FLOORS_FREE = b.comment("Buildings up to this many floors get no floor bonus.")
+                .defineInRange("floorsWithoutBonus", 3, 0, 50);
+        PER_EXTRA_FLOOR = b.comment("Extra zombies for EVERY floor above floorsWithoutBonus (still never more than maxZombiesPerRegion).")
+                .defineInRange("zombiesPerExtraFloor", 2, 0, 50);
         SCAN_CANDIDATES = b.comment("How many candidate rooms are tested per region scan (the scan is done once per region, then refreshed every few minutes).",
                         "Higher = more reliable in huge buildings, slightly more work during the scan.")
                 .defineInRange("scanCandidates", 80, 10, 400);
-        MIN_OPEN = b.comment("Zombies per region that stand OUTSIDE in the open. Keep this tiny.")
-                .defineInRange("minOpenPerRegion", 0, 0, 200);
-        MAX_OPEN = b.defineInRange("maxOpenPerRegion", 1, 0, 200);
-        OPEN_CHANCE = b.comment("Chance that a spawn attempt targets the open instead of a building (when the region has open budget).")
-                .defineInRange("openAttemptChance", 0.08, 0.0, 1.0);
-        FRONTIER_ENABLED = b.comment("Wanderers: occasionally spawn a zombie in the open at the far edge of your range, but only in land",
-                        "you have NEVER been near (the region and all 8 regions around it must be unvisited and not cleared).")
-                .define("frontierWanderers", true);
-        FRONTIER_CHANCE = b.comment("Chance per spawn cycle (per player) to try a frontier wanderer.")
-                .defineInRange("frontierChance", 0.05, 0.0, 1.0);
         b.pop();
 
         b.push("placement");

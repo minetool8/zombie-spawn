@@ -30,6 +30,8 @@ public final class RegionScanner {
         public int floorsFound;      // roofed standing spots found on the grid
         public int tested;           // how many were analysed
         public int verified;         // how many passed
+        public int maxFloors;        // floors of the tallest verified building (counted per column)
+        public double area;          // estimated indoor floor area, all floors
         public double zombies;       // raw zombie budget (before rounding)
         public double density;       // 0..1, zombies / denseIndoorPerRegion
         public long time;            // game time of the scan
@@ -46,6 +48,7 @@ public final class RegionScanner {
 
         int cols = 0, loadedCols = 0;
         List<BlockPos> floors = new ArrayList<>();
+        Map<Long, Integer> colFloors = new HashMap<>();
         for (int x = rx0 + 1; x < rx0 + size; x += stride) {
             for (int z = rz0 + 1; z < rz0 + size; z += stride) {
                 cols++;
@@ -57,6 +60,7 @@ public final class RegionScanner {
                 boolean manTop = !top.isAir() && top.getFluidState().isEmpty() && !BlockClassifier.isNatural(top);
 
                 int lowest = Math.max(minY, h - 64);
+                int before = floors.size();
                 for (int y = h - 4; y >= lowest; y--) {
                     BlockPos f = new BlockPos(x, y, z);
                     if (!Spots.isStandable(level, f)) continue;
@@ -64,6 +68,7 @@ public final class RegionScanner {
                     if (caves || manTop || h - y <= 14) floors.add(f);
                     y -= 2; // a floor needs 3 blocks of height, don't count it twice
                 }
+                colFloors.put(((long) x << 32) | (z & 0xFFFFFFFFL), floors.size() - before);
             }
         }
         if (loadedCols < Math.max(6, cols / 3)) return null;
@@ -88,20 +93,25 @@ public final class RegionScanner {
             if (r.building) {
                 sc.verified++;
                 sc.spots.add(f);
+                sc.maxFloors = Math.max(sc.maxFloors, colFloors.getOrDefault(((long) f.getX() << 32) | (f.getZ() & 0xFFFFFFFFL), 1));
             } else {
                 sc.reasons.merge(r.reason, 1, Integer::sum);
             }
         }
 
-        int dense = ZSConfig.DENSE_INDOOR.get();
+        int minZ = ZSConfig.MIN_PER_BUILDING.get();
+        int maxZ = Math.max(ZSConfig.MAX_PER_BUILDING.get(), minZ);
         if (sc.tested > 0 && sc.verified > 0) {
             double fraction = (double) sc.verified / sc.tested;
-            double area = floors.size() * (double) stride * stride * fraction;   // indoor floor area, all floors
-            sc.zombies = area / ZSConfig.AREA_PER_ZOMBIE.get();
-            sc.zombies = Math.max(1.0, sc.zombies);                               // any real building gets at least one
+            sc.area = floors.size() * (double) stride * stride * fraction;       // indoor floor area, all floors
+            // size: a small building earns about the minimum, a massive one the maximum
+            double z = minZ + (maxZ - minZ) * Math.min(1.0, sc.area / ZSConfig.MASSIVE_AREA.get());
+            // tall buildings: extra zombies for every floor above floorsWithoutBonus
+            int free = ZSConfig.FLOORS_FREE.get();
+            if (sc.maxFloors > free) z += (double) ZSConfig.PER_EXTRA_FLOOR.get() * (sc.maxFloors - free);
+            sc.zombies = Math.max(minZ, Math.min(maxZ, z));
         }
-        sc.zombies = Math.min(sc.zombies, dense);
-        sc.density = dense <= 0 ? 0.0 : Math.min(1.0, sc.zombies / dense);
+        sc.density = Math.min(1.0, sc.zombies / maxZ);
         return sc;
     }
 }

@@ -27,8 +27,8 @@ import java.util.Set;
 public class RegionData extends SavedData {
     // same name as before on purpose: existing progress (cleared areas) is kept
     private static final String NAME = "zombiespawner_regions_v2";
-    /** 3 = budgets come from the room scan. Older saves are re-measured (cleared regions stay cleared). */
-    private static final int FORMAT = 3;
+    /** 4 = budgets come from the building scan (2-7 per region). Older saves are re-measured (cleared regions stay cleared). */
+    private static final int FORMAT = 4;
 
     private final Map<Long, Integer> indoor = new HashMap<>();
     private final Map<Long, Integer> open = new HashMap<>();
@@ -64,14 +64,16 @@ public class RegionData extends SavedData {
         return indoor.containsKey(key);
     }
 
-    /** Gives a region its budget: zombies is the raw indoor amount (from the room scan), dens is 0..1. */
+    /** Gives a region its budget: zombies is the raw indoor amount from the room scan (0 = no building), dens is 0..1. */
     public void setRegion(ServerLevel level, long key, double zombies, double dens) {
         RandomSource rnd = RandomSource.create(level.getSeed() * 341873128712L + key * 132897987541L);
-        int in = (int) Math.floor(zombies) + (rnd.nextDouble() < zombies - Math.floor(zombies) ? 1 : 0);
-        in = Math.min(in, ZSConfig.DENSE_INDOOR.get());
-        int mn = ZSConfig.MIN_OPEN.get(), mx = Math.max(ZSConfig.MAX_OPEN.get(), mn);
+        int in = 0;
+        if (zombies > 0) {
+            in = (int) Math.floor(zombies) + (rnd.nextDouble() < zombies - Math.floor(zombies) ? 1 : 0);
+            in = Math.max(ZSConfig.MIN_PER_BUILDING.get(), Math.min(in, ZSConfig.MAX_PER_BUILDING.get()));
+        }
         indoor.put(key, in);
-        open.put(key, mn + rnd.nextInt(mx - mn + 1));
+        open.put(key, 0);                 // zombies only live inside buildings
         density.put(key, dens);
         setDirty();
     }

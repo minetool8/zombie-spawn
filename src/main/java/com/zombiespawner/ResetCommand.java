@@ -137,7 +137,9 @@ public class ResetCommand {
         say(src, "[ZombieSpawner] Scan of " + data.describe(key));
         say(src, "  roofed standing spots found: " + sc.floorsFound + ", tested: " + sc.tested
                 + ", verified as rooms: " + sc.verified);
-        say(src, "  indoor zombies this region earns: " + String.format("%.1f", sc.zombies));
+        say(src, "  building size: ~" + (int) sc.area + " blocks of indoor floor, tallest building " + sc.maxFloors + " floor(s)");
+        say(src, "  indoor zombies this region earns: " + String.format("%.1f", sc.zombies)
+                + " (min " + ZSConfig.MIN_PER_BUILDING.get() + ", max " + ZSConfig.MAX_PER_BUILDING.get() + ")");
         if (!sc.reasons.isEmpty()) {
             List<Map.Entry<String, Integer>> list = new ArrayList<>(sc.reasons.entrySet());
             list.sort((a, b) -> b.getValue() - a.getValue());
